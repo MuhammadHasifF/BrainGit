@@ -1,0 +1,53 @@
+# Docker Compose for brainbot.
+# Runs three services: postgres (with pgvector), the bot, and Caddy as reverse proxy.
+#
+# DESIGN NOTE: in-process APScheduler is fine for a single user. If we ever
+# scale to multiple users we'd extract the scheduler into its own service.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Postgres is reachable only from the internal Docker network.
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # OAuth client JSONs (optional) and any local secrets the user mounts in.
+      - ./secrets:/app/secrets:ro
+      - ./logs:/app/logs
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy_data:/data
+      - ./caddy_config:/config
+    environment:
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+    depends_on:
+      - bot

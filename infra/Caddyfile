@@ -1,0 +1,35 @@
+# Caddy reverse proxy in front of the FastAPI app.
+#
+# Set PUBLIC_BASE_URL in .env, e.g. https://bot.example.com — Caddy will
+# parse the host, request a Let's Encrypt cert for it, and forward
+# requests to the `bot` service in the Compose network.
+
+{$PUBLIC_BASE_URL} {
+    encode zstd gzip
+
+    # Strict transport security (Caddy adds Strict-Transport-Security on HTTPS by default).
+    header {
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        # Allow only same-origin embedding.
+        X-Frame-Options "DENY"
+    }
+
+    # Telegram pushes JSON to /telegram/webhook. Everything else is internal.
+    @public {
+        path /telegram/webhook /healthz
+    }
+    handle @public {
+        reverse_proxy bot:8000
+    }
+
+    handle {
+        respond "Not found" 404
+    }
+
+    log {
+        output stdout
+        format console
+        level INFO
+    }
+}
